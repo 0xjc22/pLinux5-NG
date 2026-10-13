@@ -9,7 +9,7 @@ boot linux on PS5 consoles running high firmware (8.xx through 13.60)
 this project is a port/rework of the existing [ps5-linux-loader](https://github.com/ps5-linux/ps5-linux-loader) 
 (which currently works on 3.00 though 7.61) to the new [byepervisor-reborn](https://github.com/PS5Dev/Byepervisor-Reborn) hypervisor escape 
 
-- the linux boot pat itself (bzImage/initrd relocation, `boot_params`/e820 setup,
+- the linux boot path itself (bzImage/initrd relocation, `boot_params`/e820 setup,
   hardware bring up, SVM/IOMMU teardown, the jump to `startup_64`) is brought over
   from the existing ps5-linux-loader
 - the *escape* -- how we get code running in hypervisor root mode on all cores on high firmware --
@@ -46,7 +46,7 @@ step 4, then come back here.
 - you should end up on a page with big letters saying `RELAPSE`, click the `Jailbreak` button & wait for it to finish
   it finishing will be marked by elfldr starting.
 
-now download the `pLinux5-NG.elf` file from releases, or see [building](#building) to build from source, then move to [sending](###sending)
+now download the `pLinux5-NG.elf` file from releases, or see [building](#building) to build from source, then move to [sending](#sending)
 
 
 # building
@@ -81,20 +81,20 @@ on linux/unix, use:
 # (from the area with the repo + pLinux5-NG.elf) 
 cd scripts/
 chmod +x send.sh
-./send.sh PS5_IP=<Playstation 5s IP> PS5_PORT=9021 pLinux5-NG.elf
+./send.sh PS5_IP=<Playstation 5s IP> PS5_PORT=9021
 ```
 on windows, if using powershell, use:
 ```powershell
-.\scripts\send.ps1 -PS5IP <PS5s IP here> -Port 9021
+.\scripts\send.ps1 -PS5IP <Playstation 5s IP> -Port 9021
 ```
 otherwise, if using CMD/Command Prompt, use:
 ```cmd
-powershell -ExecutionPolicy Bypass -File .\scripts\send.ps1 -PS5IP <PS5s IP here> -Port 9021
+powershell -ExecutionPolicy Bypass -File .\scripts\send.ps1 -PS5IP <Playstation 5s IP> -Port 9021
 ```
 
 ## License
 
-This project is licensed under the **AGPL-3.0**.
+This project is licensed under the **AGPL-3.0** licence.
 The boot path and shellcode are derived from **ps5-linux-loader**, which is
 **GPL-3.0**; those files retain their original authorship and are used here in
 accordance with the GPL/AGPL compatibility provisions. The high-firmware escape

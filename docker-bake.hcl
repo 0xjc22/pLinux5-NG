@@ -6,5 +6,5 @@ target "pld" {
   context    = "."
   dockerfile = "Dockerfile"
   target     = "final"
-  output     = ["type=local,dest=out"]
+  output     = ["type=local,dest=bin"]
 }
