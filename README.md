@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> this project is still **VERY** Work-in-progress, currently only 13.20 is supported
+> until I can get linux running properly on firmware 13.20
+
 # pLinux5-NG
 
 boot linux on PS5 consoles running high firmware (8.xx through 13.60) 
