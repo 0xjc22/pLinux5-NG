@@ -260,6 +260,102 @@ only consumed by the legacy `shellcode_kernel` args in `prepare_resume.c` and by
 display/WiFi features. They are **not** on the 13.20 `shellcode_hv` boot path,
 which needs only the fields `check_offsets()` in `hv_defeat_1320.c` verifies.
 
+## 7b. Wake-crash bisection (`PL5_DIAG`)
+
+The first hardware runs armed the escape successfully (`[A]`..`[F]`) but the
+console crashed instead of resuming, with no post-resume output. Because the
+console has no UART and each attempt costs a power cycle, the vector is buildable
+in five progressively-more-invasive diagnostic stages selected with
+`-DPL5_DIAG=<n>`.
+
+`enter_rest_mode()` only *requests* suspend and returns immediately, so
+`post_resume()` runs while the console is still awake. It therefore prints a
+pre-suspend marker `[W0] pre-suspend ... waiting for resume` first, then polls
+the oracle until `break_hv` stamps the cookie, then prints the *real*
+`[W] resumed from rest mode ... cookie=... NPT disabled`. Only `[W]` proves a
+genuine resume; a run that shows `[W0]` but never `[W]` crashed in
+suspend/resume, and a run with no `[W0]` at all crashed before sleeping.
+
+| Stage | Escape | Hook | RSI redirect | Phase B staging | Phase B takeover | Tests |
+|-------|--------|------|--------------|-----------------|------------------|-------|
+| 0 | no | no | no | no | no | S3 round-trip + elfldr resumes this process at all |
+| 1 | yes | yes | no | no | no | the IDT/DR gate survives suspend/resume and the HV `startup_mp` call fires the hook |
+| 2 | yes | yes | yes (`break_hv`) | no | no | `break_hv` (NPT off, cookie, jump to init vector) |
+| 3 | yes | yes | yes | yes | no | `stage_hv_boot()`'s ~66 MB cave write, isolated |
+| 4 | yes | yes | yes | yes | yes | full takeover + `shellcode_hv` → Linux |
+
+Build one stage at a time (the `-D` change does not retrigger a rebuild on its
+own):
+
+```bash
+export PS5_PAYLOAD_SDK=/nyaa/coding/local/playstation-SecRec/sdk/ps5-payload-sdk
+export LLVM_CONFIG=/nyaa/coding/public/PS5/dRPC5/pLabs5-SDK/tools/nixos/llvm-config
+for n in 0 1 2 3 4; do
+  make clean-objs >/dev/null
+  make PL5_DIAG=$n -j && cp bin/pLinux5-NG.elf bin/pLinux5-NG-diag$n.elf
+done
+```
+
+**Hardware results so far (2026-10-13):**
+
+- Stage 2: `[A]`..`[F]` armed, `[W0]`, then **`[W] ... cookie=0xcafe... NPT
+  disabled`** and `[Y] diag=2 stop` -- **phase A works, console stays up**. The
+  arm-time `stage_hv_boot()` / `prepare_resume()` deviations were the wake-crash
+  cause.
+- Stage 3 (old definition = full takeover): console **crashed**. The only code
+  path unique to it is `stage_hv_boot()` + the takeover hook; the new stage 3
+  isolates `stage_hv_boot()`.
+
+Recommended next: run **stage 3** (staging only). Stays up → the ~66 MB cave
+write is safe and the crasher is the takeover hook (stage 4). Crashes → the cave
+write itself is the problem.
+
+`stage_hv_boot()` now prints `[S1]`..`[S6]` around each sub-step (identity map,
+shellcode copy, linux_info, bzImage, initrd) so the exact faulting write is
+visible on screen.
+
+### Stage 4 crash: general VMEXIT dispatcher vs VMMCALL-specific handler
+
+Stage 4 (full takeover) crashed again right after `[W]`, with neither the FTP
+log nor the elfldr socket showing any `[P*]`. Root cause in the blob: it patched
+the **general VMEXIT dispatcher entry** at `0x62846c00` with the
+`mov cr3`/`jmp cave` stub. That entry is reached for *every* exit reason
+(timer/RDTSC/MSR/RDRAND/NPF/...), not just VMMCALL. With NPT disabled the guest
+still VMEXITs constantly, so the first unrelated exit — often on the BSP itself,
+mid `smp_rendezvous` setup — sent one CPU into `shellcode_hv` while the others
+were still spinning in the rendezvous. `shellcode_hv` waits for the full set, so
+the console hung.
+
+Fix, matching the intent stated in the blob header ("the first VMMCALL hands
+control to shellcode_hv"):
+
+- Patch the **VMMCALL-specific handler** `0x62847375` (target of VMEXIT
+  jump-table A for `ec=0x081`) instead of the dispatcher entry, so only a
+  deliberate `vmmcall` diverts.
+- Drive the rendezvous action through the kernel's hypercall-4 wrapper
+  `ktext+0xc09e40` (`push rbp;mov rbp,rsp;mov eax,4;vmmcall;pop rbp;ret`).
+  RAX=4 keeps the guest off the `RAX==0x17` fast path that would otherwise divert
+  VMMCALL to `0x62846cc9` (a different, unpatched path).
+
+Touched: `shellcode_hv_takeover/takeover.c` (patch target + action) and
+`source/hv_defeat_1320.c` (a `[W+]` post-wake settle loop that re-opens the log a
+few times so `[W]`/`[P*]` actually reach the socket instead of vanishing in the
+wake window). Rebuild all stages.
+
+### Deviations from Byepervisor's arm path that were removed here
+
+Byepervisor's arm path is only: stage `break_hv` into `DATA_CAVE+0x1000`, mark
+`0x3FFFF000` executable, patch kernel `.text` RW/XOTEXT, install the oneshot
+hook, then idle. Two deviations were carrying arm-time risk and are now gone:
+
+- `stage_hv_boot()` is **no longer called before sleeping**. It wrote ~64 MB
+  (bzImage + initrd + identity table) into the 4 GiB cave, which Byepervisor
+  never touches pre-suspend, and it is redundant: `post_resume()` re-stages
+  everything for phase B anyway.
+- `prepare_resume()` (legacy `shellcode_kernel` staging + a `page_chain_set_rw`
+  rewrite driven by the low-FW `cr3`/`dmap` globals) is **skipped for fw >= 8.00**:
+  the 13.20 vector never uses `shellcode_kernel`.
+
 ## 8. License
 
 AGPL-3.0 (`LICENSE`). Boot path and shellcode are GPL-3.0 from ps5-linux-loader

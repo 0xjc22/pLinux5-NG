@@ -13,15 +13,15 @@ TARGET  = takeover.elf
 TEXT_BIN = takeover.bin
 dump = takeover.h
 
-SRC = takeover.c
-OBJ = $(SRC:.c=.o)
+SRC = takeover.S
+OBJ = $(SRC:.S=.o)
 
 all: $(dump)
 
 $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $(TARGET)
 
-%.o: %.c
+%.o: %.S
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TEXT_BIN): $(TARGET)

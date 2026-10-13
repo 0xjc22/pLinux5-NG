@@ -156,6 +156,8 @@ int pin_to_core(int n);
 int pin_to_first_available_core(void);
 void unpin(void);
 void notify(const char *fmt, ...);
+void logmsg(const char *fmt, ...);
+void log_reopen(void);
 void notify_internal(uint8_t *msg);
 void enter_rest_mode(void);
 

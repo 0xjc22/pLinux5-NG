@@ -38,6 +38,16 @@
 // blob). Linux boots with full SMP.
 #define HV_HEADLESS_SINGLE_CORE 0
 
+/* shellcode_hv checkpoint bisection (debug only). When != 0 the shellcode
+ * halts at a checkpoint instead of finishing the boot:
+ *   1 = freeze at the very top of entry() (tests diversion + entry)
+ *   2 = halt after linux_info copy + configure_vram (barrier skipped)
+ *   3 = halt after the SMP barrier (barrier enabled)
+ *   0 = full boot (default).  Set with `make -C shellcode_hv PL5_HV_STOP=N`. */
+#ifndef PL5_HV_STOP
+#define PL5_HV_STOP 0
+#endif
+
 #define DEBUG 0 // Toggle to 0 to disable logs
 
 #endif

@@ -1,11 +1,64 @@
 #include "utils.h"
 #include "linux.h"
 #include "offsets.h"
+#include <fcntl.h>
 #include <stdio.h>
 #include <sys/cpuset.h>
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <unistd.h>
+
+/* File log: mirrored from notify()/logmsg(). We open *every* candidate that
+ * accepts a handle (the USB stick the loader already reads AND the internal FS)
+ * and write each line to all of them, so the log can be pulled by unplugging the
+ * USB or over FTP. Candidates are retried on every call, because the very first
+ * notify() runs before setup_env() has verified the mounts. Each line is
+ * fsync()'d so the final line survives a crash. */
+#define PL5_LOG_MAX 6
+static int g_log_fd[PL5_LOG_MAX]; /* 0 = not opened yet (retry each call) */
+static int g_log_append = 0;      /* reopen existing files without truncating */
+static uint64_t g_log_seq = 0;
+
+static const char *const g_log_paths[] = {
+    "/mnt/usb0/plinux5.log", "/mnt/usb1/plinux5.log", "/mnt/usb2/plinux5.log",
+    "/mnt/usb3/plinux5.log", "/data/plinux5.log",    "/tmp/plinux5.log",
+    NULL,
+};
+
+/* After a suspend/resume the backing mounts may have gone away while we were
+ * frozen, so the pre-suspend descriptors go stale. Call this post-resume to
+ * force a fresh open (append, so the pre-suspend log is preserved). */
+void log_reopen(void) {
+  for (int i = 0; i < PL5_LOG_MAX; i++)
+    g_log_fd[i] = 0;
+  g_log_append = 1;
+}
+
+static void pl5_log_write(const char *msg) {
+  for (int i = 0; g_log_paths[i]; i++) {
+    if (g_log_fd[i] == 0) {
+      int flags = O_WRONLY | O_CREAT | (g_log_append ? O_APPEND : O_TRUNC);
+      int fd = open(g_log_paths[i], flags, 0644);
+      if (fd > 0)
+        g_log_fd[i] = fd;
+    }
+  }
+
+  char line[2112];
+  int n = snprintf(line, sizeof(line), "[%06llu] %s",
+                   (unsigned long long)g_log_seq++, msg);
+  if (n <= 0)
+    return;
+  size_t len = (size_t)(n < (int)sizeof(line) ? n : (int)sizeof(line));
+
+  for (int i = 0; g_log_paths[i]; i++) {
+    if (g_log_fd[i] > 0) {
+      write(g_log_fd[i], line, len);
+      fsync(g_log_fd[i]);
+    }
+  }
+}
 
 /* Global Variables */
 offset_list env_offset;
@@ -256,7 +309,10 @@ uint64_t page_remove_global(uint64_t va) {
 
 int pin_to_core(int n) {
   uint64_t m[2] = {0};
-  m[0] = (1 << n);
+  /* Sony's kernel numbers CPUs in reverse: logical core N is physical bit
+   * (15 - N). pin_to_core(0) must land us on the CPU whose TSS/IST the khook
+   * uses (kh_set_core(0)) or the #DB will vector with the wrong IST. */
+  m[0] = 1ULL << (15 - n);
   return cpuset_setaffinity(3, 1, -1, 0x10, (const cpuset_t *)m);
 }
 
@@ -282,6 +338,23 @@ void notify(const char *fmt, ...) {
 
   notify_internal((uint8_t *)buffer);
   printf("%s", buffer);
+  fflush(stdout);
+  pl5_log_write(buffer);
+}
+
+/* Log to stdout + file without the on-screen notification popup (used for the
+ * verbose per-step tracing that would otherwise spam the screen). */
+void logmsg(const char *fmt, ...) {
+  static char buffer[2048];
+  va_list args;
+
+  va_start(args, fmt);
+  vsnprintf(buffer, sizeof(buffer), fmt, args);
+  va_end(args);
+
+  printf("%s", buffer);
+  fflush(stdout);
+  pl5_log_write(buffer);
 }
 
 void notify_internal(uint8_t *msg) {

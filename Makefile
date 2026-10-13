@@ -16,8 +16,15 @@ OBJS := $(SRC:.c=.o)
 PL5_DIAG ?= 4
 # Takeover-blob step selector (see shellcode_hv_takeover/takeover.S).
 PL5_TAKEOVER_STAGE ?= 3
+# Pre-rest-mode resume_rip probe (source/hv_defeat_1320.c). Off by default so
+# PL5_DIAG=4 runs the real post-resume flow; set to 1 for the probe build.
+PL5_PROBE ?= 0
+# shellcode_hv checkpoint bisection (shellcode_hv/boot_linux.c): freeze at a
+# checkpoint instead of booting. 0=full boot, 1=entry, 2=post-configure_vram,
+# 3=post-barrier.
+PL5_HV_STOP ?= 0
 
-CFLAGS  := -std=c23 -Wall -DPL5_DIAG=$(PL5_DIAG) -DPL5_TAKEOVER_STAGE=$(PL5_TAKEOVER_STAGE) -Iinclude -Iinclude/byepervisor -Ishellcode_hv -Ishellcode_kernel -Ishellcode_break_hv -Ishellcode_hv_boot -Ishellcode_hv_takeover
+CFLAGS  := -std=c23 -Wall -DPL5_DIAG=$(PL5_DIAG) -DPL5_TAKEOVER_STAGE=$(PL5_TAKEOVER_STAGE) -DPL5_PROBE=$(PL5_PROBE) -Iinclude -Iinclude/byepervisor -Ishellcode_hv -Ishellcode_kernel -Ishellcode_break_hv -Ishellcode_hv_boot -Ishellcode_hv_takeover
 # pLabs5 toolchain override (see PORTING.md). Pass LLVM_CONFIG in the environment:
 #   export LLVM_CONFIG=/nyaa/coding/public/PS5/dRPC5/pLabs5-SDK/tools/nixos/llvm-config
 LDFLAGS :=
@@ -35,7 +42,7 @@ $(SC_0607_H):
 	$(MAKE) -C shellcode_0607
 
 $(SC_HV_H):
-	$(MAKE) -C shellcode_hv
+	$(MAKE) -C shellcode_hv PL5_HV_STOP=$(PL5_HV_STOP)
 
 $(SC_K_H): $(SC_HV_H)
 	$(MAKE) -C shellcode_kernel

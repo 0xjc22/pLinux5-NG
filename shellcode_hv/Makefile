@@ -7,7 +7,8 @@ CC      = gcc
 LD      = ld
 OBJCOPY = objcopy
 endif
-CFLAGS  = -O2 -fno-stack-protector -ffreestanding -nostdlib -fcf-protection=none -fomit-frame-pointer -mno-sse -mno-sse2 -m64
+PL5_HV_STOP ?= 0
+CFLAGS  = -O2 -fno-stack-protector -ffreestanding -nostdlib -fcf-protection=none -fomit-frame-pointer -mno-sse -mno-sse2 -m64 -DPL5_HV_STOP=$(PL5_HV_STOP)
 LDFLAGS = -T linker.ld
 TARGET  = shellcode_hv.elf
 TEXT_BIN = shellcode_hv.bin

@@ -125,6 +125,11 @@ void boot_linux(void) {
 
   memcpy((void *)kernel_pa, (void *)(info.bzimage + setup_size), kernel_size);
 
+#if PL5_HV_STOP == 4
+  for (;;)
+    halt();
+#endif
+
   void (*startup_64)(uint64_t physaddr, struct boot_params *bp) =
       (void *)(kernel_pa + 0x200);
   startup_64(kernel_pa, bp);
@@ -132,6 +137,11 @@ void boot_linux(void) {
 
 void entry(void) {
   disable_intr();
+
+#if PL5_HV_STOP == 1
+  for (;;)
+    halt();
+#endif
 
   // Set global interrupt flag.
   __asm__ volatile("stgi\n");
@@ -149,11 +159,19 @@ void entry(void) {
 
   atomic_add_32(&exited_cpus, 1);
 
-#if !HV_HEADLESS_SINGLE_CORE
+#if !HV_HEADLESS_SINGLE_CORE && (PL5_HV_STOP == 0 || PL5_HV_STOP == 3)
   // Single-core bring-up: we never drive the other cores (no smp_rendezvous),
   // so waiting for all MAXCPU cores would hang. Skip the barrier.
   while (atomic_cmpset_32(&exited_cpus, MAXCPU, MAXCPU) == 0)
     ;
+#endif
+
+#if PL5_HV_STOP == 3
+  /* Barrier enabled: if it completes, force a triple fault (fast reset) so we
+   * can tell "barrier reached" (reset) from "barrier hung" (frozen screen). */
+  __asm__ volatile("ud2");
+  for (;;)
+    halt();
 #endif
 
   if (get_cpu() != 0) {
@@ -168,6 +186,11 @@ void entry(void) {
   memcpy(&info, (void *)(cave_linux_info), sizeof(struct linux_info));
 
   configure_vram(FB_BASE, VRAM_BASE, info.vram_size);
+
+#if PL5_HV_STOP == 2
+  for (;;)
+    halt();
+#endif
 
   printf("[*] Booting Linux in bare metal...\n");
   boot_linux();
