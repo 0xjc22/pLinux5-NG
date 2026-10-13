@@ -57,6 +57,8 @@ chmod +x send.sh
 
 
 # building
+
+## Locally
 Requires the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk) and the
 pLabs5 host toolchain override:
 
@@ -71,6 +73,13 @@ The output is `bin/pLinux5-NG.elf`.
 The shellcode blobs are compiled freestanding with the host `gcc`
 (`-ffreestanding -nostdlib`) and embedded as C headers; `scripts/bin2c.py`
 replaces `xxd -i`, which is not present in every environment.
+
+## Docker
+Run
+```
+docker buildx bake
+```
+The output is `out/pLinux5-NG.elf`.
 
 ## Sending
 
