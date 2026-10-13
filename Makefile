@@ -10,7 +10,14 @@ BIN := bin/pLinux5-NG.elf
 SRC := $(wildcard source/*.c source/byepervisor/*.c)
 OBJS := $(SRC:.c=.o)
 
-CFLAGS  := -std=c23 -Wall -Iinclude -Iinclude/byepervisor -Ishellcode_hv -Ishellcode_kernel -Ishellcode_break_hv -Ishellcode_hv_boot -Ishellcode_hv_takeover
+# Diagnostic bisection stage (see source/hv_defeat_1320.c). Override on the
+# command line, e.g. `make PL5_DIAG=1`. Remember to clear the objects first
+# (the flag does not retrigger a rebuild on its own): `make -C . clean-objs`.
+PL5_DIAG ?= 4
+# Takeover-blob step selector (see shellcode_hv_takeover/takeover.S).
+PL5_TAKEOVER_STAGE ?= 3
+
+CFLAGS  := -std=c23 -Wall -DPL5_DIAG=$(PL5_DIAG) -DPL5_TAKEOVER_STAGE=$(PL5_TAKEOVER_STAGE) -Iinclude -Iinclude/byepervisor -Ishellcode_hv -Ishellcode_kernel -Ishellcode_break_hv -Ishellcode_hv_boot -Ishellcode_hv_takeover
 # pLabs5 toolchain override (see PORTING.md). Pass LLVM_CONFIG in the environment:
 #   export LLVM_CONFIG=/nyaa/coding/public/PS5/dRPC5/pLabs5-SDK/tools/nixos/llvm-config
 LDFLAGS :=
@@ -52,6 +59,9 @@ $(OBJS): $(SC_0607_H) $(SC_HV_H) $(SC_K_H) $(SC_BREAK_H) $(SC_BOOT_H) $(SC_TAKEO
 $(BIN): $(OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(OBJS) $(LDFLAGS) -o $@
+
+clean-objs:
+	rm -f $(OBJS)
 
 clean:
 	rm -f $(BIN) $(OBJS)
