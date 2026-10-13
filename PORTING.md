@@ -110,18 +110,59 @@ pcpus at `hv+0x82A60`, heap-base symbol at `hv+0x83028`, 16 VMCBs at
 `hv+0x257000` (phys `0x62A57000`) stride `0x2000`, HV image strings
 `"HV loader"`/`"hypercore"`.
 
+### Located by dump scan (this session)
+
+Derived by scanning `dumps/kernel_text_1320.bin` (`.text`, base
+`0xFFFFFFFF9B600000`, file offset == offset) and resolving string references in
+`dumps/data_dump*.bin` (`.data`, base `0xFFFFFFFF9C2B0000`):
+
+| Symbol | Offset | Evidence |
+|--------|--------|----------|
+| `FUN_SMP_RENDEZVOUS` | `0xAF94E0` | 4-arg wrapper; loads `all_cpus` (`[0x9F2E9E88]`) into `RDI` and `jmp`s `smp_rendezvous_cpus` (`0xAF92B0`). |
+| `KERNEL_CFI_CHECK` | `0x44E5D0` | Out-of-line UBSan CFI handler; reached from every indirect-call slow path (e.g. `smp_targeted_tlb_shootdown` `0x817C50`, `smp_rendezvous_cpus`). References the `"cfi_check_fail"` string `0x9C900E52`. Patch byte 0 to `0xC3` to disable CFI. |
+
+Rendezvous internals for reference: `smp_ipi_mtx` `0x9F2E9EA8` (lock
+`0x9BAC4FB0`, unlock `0x9BAC5340`, init `0x9BAC5BF0`); `all_cpus`
+`0x9F2E9E88`; `smp_rendezvous_action` `0x9C0F9110`; init/`mtx_init` fn
+`0x9C0F9D80` (uses the `"smp rendezvous"` witness `0x9C8CA448`).
+
+### In progress: not-yet-located symbols (leads)
+
+These are non-blocking for the escape but needed for a booted/usable system.
+Cross-firmware extrapolation is unreliable (the kernel data layout jumps between
+FW families, e.g. `G_VBIOS` moves ~57 MB between 6.xx and 7.xx), so each needs
+its own signature:
+
+- `KERNEL_UART_OVERRIDE` (`.data` `uint32_t`; `activate_uart()` zeroes it).
+  Likely lead: the UART driver softc at VA `0xFFFFFFFF9EA4F4A8` (base
+  `0xFFFFFFFF9EA4F468`), `.data` offset `0x279F4A8` in `data_dump_88m.bin`,
+  `+0x70` = `0xC1010100` (UART register base). Driver `.text` at `0x9B947180`
+  and `0x9B948E80` reference the softc (`+0x00/0x18/0x20/0x28`). No `.text` ref
+  to the `+0x30`/`0xC1010100` field was found, so this is not yet confirmed.
+- Display/HDMI `G_VBIOS`, `FUN_TRANSMITTER_CONTROL`, `FUN_MP3_INITIALIZE`,
+  `FUN_MP3_INVOKE`: MP3/HDMI/DP module string refs mapped in `.text`, e.g.
+  `"failed to suspend mp3 kmd"` -> `0x9C00C02A`, `"mp3_scanin_unblock_handler"`
+  -> `0x9C00C4A7`, `"failed to resume mp3 kmd"` -> `0x9C00C114`; HDMI error
+  strings cluster around `0x9BAAF...`/`0x9BAB0xxx`. Exact entry points TBD.
+- `PS5_WIFI_FW_OFFSET`/`SIZE`: blob is loaded from the initrd
+  `lib/nxp/pcieuartiw620_combo_v1.bin`; kernel-side copy not yet located.
+
 ### Remaining gaps (fields still `0` in `off_1320`)
 
-These must be located (by signature-scanning `dumps/kernel_text_1320.bin` and the
-kernel data dumps) before 13.20 can boot:
+The escape itself (`hv_defeat_1320()`) only needs the khook/HV/gadget offsets
+enforced by `check_offsets()`; those are all populated, so the escape can run
+today. The gaps below only feed the **Linux prep** (multi-core launch + boot
+blob), which is not wired yet:
 
-- Loader utils: `IOMMU_SOFTC`, `VMSPACE_VM_VMID`, `DATA_BASE_GVMSPACE`
-  (`VMSPACE_VM_PMAP` is known: `0x1D8`).
-- Kernel-context prep: `FUN_MEMCPY`, `FUN_SMP_RENDEZVOUS`,
-  `FUN_SMP_NO_RENDEVOUS_BARRIER`, `KERNEL_CFI_CHECK`, `KERNEL_UART_OVERRIDE`.
+- `KERNEL_UART_OVERRIDE`: a `.data` global (`ktext + 0x1F...` on 5.00-7.61);
+  still unlocated. The only remaining hard prerequisite for kernel prep.
+- `FUN_MEMCPY`, `FUN_SMP_NO_RENDEVOUS_BARRIER`: **not required** — the
+  shellcode supplies its own memcpy and no-op barrier.
+- `IOMMU_SOFTC`, `DATA_BASE_GVMSPACE` (`VMSPACE_VM_VMID`=`0x1E4`,
+  `VMSPACE_VM_PMAP`=`0x1D8`): upstream marks these "not needed" for 6.00+.
 - Display/HDMI bring-up (headless boot does not need these): `G_VBIOS`,
   `FUN_TRANSMITTER_CONTROL`, `FUN_MP3_INITIALIZE`, `FUN_MP3_INVOKE`.
-- HV IOMMU helpers (used by the 3.00–7.61 boot): `FUN_HV_IOMMU_SET_BUFFERS`,
+- HV IOMMU helpers (used by the 3.00-7.61 boot): `FUN_HV_IOMMU_SET_BUFFERS`,
   `FUN_HV_IOMM_WAIT_COMPLETION`.
 - WiFi firmware blob: `PS5_WIFI_FW_OFFSET`, `PS5_WIFI_FW_SIZE`.
 - Possibly obsolete for this vector: `HV_CODE_CAVE_PA`, `HV_HANDLE_VMEXIT_PA`
@@ -194,6 +235,30 @@ nc -N <PS5_IP> 9021 < bin/pLinux5-NG.elf
   exploit implementation.
 - Byepervisor / Byepervisor-Reborn — high-firmware (8.xx+) khook escape.
 - [john-tornblom](https://github.com/john-tornblom) — PS5 payload SDK.
+
+## 7a. Live validation (13.20, console)
+
+Read-only probe `payloads/verify-1320/` (in the SecRec tree) run against a live
+13.20 console (`kernel_get_fw_version() == 0x13200006`) with Byepervisor loaded:
+
+- Kernel R/W confirmed: `*(ALLPROC) = 0xffffa31b3305ccf0`.
+- **Runtime kernel text base is `0xffffffffd49d0000`**, not the
+  `0xffffffff9b600000` used when analysing our static dumps. The two dumps are
+  byte-identical at the same *offset* (`base+0x4abb80` =
+  `55 48 89 e5 53 48 83 ec 58 48 8d 1d 80 c7 45 03`, `base+0x44e5d0` =
+  `55 48 89 e5 41 57 41 56 53 50 48 89 f3 49 89 fe`), i.e. the absolute base
+  differs by a constant but every `offset_list` value (which is relative to
+  `KERNEL_ADDRESS_TEXT_BASE`) is correct.
+- Runtime already uses the right base: `source/utils.c` sets
+  `ktext = KERNEL_ADDRESS_TEXT_BASE`. The `offsets.c` comment claiming the base
+  is `0x9b600000` is stale and refers only to the dump's addressing, not to the
+  live value.
+
+Consequence: the unlocated offsets (`KERNEL_UART_OVERRIDE`, `G_VBIOS`,
+`FUN_TRANSMITTER_CONTROL`, `FUN_MP3_*`, `FUN_HV_IOMMU_*`, `PS5_WIFI_FW_*`) are
+only consumed by the legacy `shellcode_kernel` args in `prepare_resume.c` and by
+display/WiFi features. They are **not** on the 13.20 `shellcode_hv` boot path,
+which needs only the fields `check_offsets()` in `hv_defeat_1320.c` verifies.
 
 ## 8. License
 

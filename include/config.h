@@ -33,10 +33,10 @@
   "root=/dev/sda2 rw rootwait console=ttyTitania0 console=tty0 "               \
   "video=DP-1:1920x1080@60 mitigations=off idle=halt pci=pcie_bus_perf"
 
-// Headless bring-up: the 13.20 khook payload runs on a single core, so
-// shellcode_hv must not wait for all 16 cores and Linux must boot UP-only.
-// Set to 0 once the multi-core launch (smp_rendezvous / LAPIC IPI) is wired.
-#define HV_HEADLESS_SINGLE_CORE 1
+// Multi-core launch: shellcode_hv waits for all 16 logical CPUs, which are
+// brought into the HV via the kernel's own smp_rendezvous() (see the takeover
+// blob). Linux boots with full SMP.
+#define HV_HEADLESS_SINGLE_CORE 0
 
 #define DEBUG 0 // Toggle to 0 to disable logs
 

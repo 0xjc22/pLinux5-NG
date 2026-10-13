@@ -795,14 +795,25 @@ offset_list off_1320 = {
     /* TODO(13.20): HV IOMMU helpers not yet located */
     .FUN_HV_IOMMU_SET_BUFFERS = 0,
     .FUN_HV_IOMM_WAIT_COMPLETION = 0,
-    .FUN_SMP_RENDEZVOUS = 0,
+    /* 4-arg wrapper: tail-calls smp_rendezvous_cpus (0xAF92B0) with all_cpus
+     * ([0x9F2E9E88]).  Located by disassembling subr_smp.c region around the
+     * "smp rendezvous" string (0x9C0F9D80) and following refs to the shared
+     * rendezvous globals. */
+    .FUN_SMP_RENDEZVOUS = 0xAF94E0,
+    /* TODO(13.20): the no-op setup/teardown barrier is still unidentified; the
+     * shellcode can substitute its own no-op, so this may stay unused. */
     .FUN_SMP_NO_RENDEVOUS_BARRIER = 0,
     /* The Byepervisor vector runs from startup_mp, not a fixed VMEXIT cave */
     .HV_CODE_CAVE_PA = 0,
     .HV_HANDLE_VMEXIT_PA = 0,
-    /* TODO(13.20): kernel patches (UART / CFI) not yet located */
+    /* TODO(13.20): UART override not yet located */
     .KERNEL_UART_OVERRIDE = 0,
-    .KERNEL_CFI_CHECK = 0,
+    /* Out-of-line UBSan CFI failure handler: called on the slow path of every
+     * indirect call (e.g. smp_targeted_tlb_shootdown @0x817C50 -> 0x9BA4E5D0,
+     * smp_rendezvous_cpus @0xAF92B0 -> 0x9BA4E5D0).  Patching byte 0 to 0xC3
+     * disables CFI (upstream behaviour).  References the "cfi_check_fail"
+     * format string (0x9C900E52). */
+    .KERNEL_CFI_CHECK = 0x44E5D0,
     /* TODO(13.20): display bring-up symbols not yet located */
     .G_VBIOS = 0,
     .FUN_TRANSMITTER_CONTROL = 0,

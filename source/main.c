@@ -19,6 +19,7 @@ int main(void) {
     return -1;
   }
 
+  int is_1320 = 0;
   void *shellcode_kernel;
   size_t shellcode_kernel_len;
   if (prepare_resume(&shellcode_kernel, &shellcode_kernel_len)) {
@@ -38,6 +39,7 @@ int main(void) {
   } else if ((0x0800 <= fw) && (fw < 0x1400)) {
     if (hv_defeat_1320(shellcode_kernel, shellcode_kernel_len))
       goto err;
+    is_1320 = 1;
   } else {
     goto err;
   }
@@ -48,6 +50,11 @@ int main(void) {
 
   sleep(5);
   enter_rest_mode();
+
+  /* On 13.20 the console comes back from rest mode with NPT disabled; finish
+   * the takeover from here (runs on the BSP once we wake). */
+  if (is_1320)
+    hv_defeat_1320_post_resume();
 
   while (1) {
     sleep(30);
