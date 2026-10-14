@@ -1,4 +1,4 @@
-.PHONY: all clean
+.PHONY: all clean version
 
 ifndef PS5_PAYLOAD_SDK
     PS5_PAYLOAD_SDK = /opt/ps5-payload-sdk/
@@ -7,8 +7,18 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 
 BIN := bin/pLinux5-NG.elf
-SRC := $(wildcard source/*.c source/byepervisor/*.c source/offsets/*.c source/hv/defeat/*.c)
+SRC := $(wildcard source/*.c source/byepervisor/*.c source/core/*.c source/hw/*.c source/boot/*.c source/manifest/*.c source/offsets/*.c source/hv/defeat/*.c)
 OBJS := $(SRC:.c=.o)
+
+# Project identity lives in source/manifest/manifest.c (see include/manifest.h).
+# Its .version is the single source of truth - CI reads the same field to name
+# releases, so the ELF and the release cannot disagree.
+MANIFEST_C := source/manifest/manifest.c
+manifest-field = $(shell sed -n 's/^[[:space:]]*\.$(2)[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(1))
+PL5_VERSION := $(call manifest-field,$(MANIFEST_C),version)
+ifeq ($(strip $(PL5_VERSION)),)
+$(error could not read .version from $(MANIFEST_C))
+endif
 
 # Diagnostic bisection stage (see source/hv/defeat/hv_defeat_1320.c). Override on the
 # command line, e.g. `make PL5_DIAG=1`. Remember to clear the objects first
@@ -37,6 +47,10 @@ SC_BOOT_H := source/shellcode/hv_boot/hv_boot.h
 SC_TAKEOVER_H := source/shellcode/hv_takeover/takeover.h
 
 all: $(SC_0607_H) $(SC_HV_H) $(SC_K_H) $(SC_BREAK_H) $(SC_BOOT_H) $(SC_TAKEOVER_H) $(BIN)
+
+# Print the manifest version (read from source/manifest/manifest.c).
+version:
+	@printf '%s\n' '$(PL5_VERSION)'
 
 $(SC_0607_H):
 	$(MAKE) -C source/shellcode/0607

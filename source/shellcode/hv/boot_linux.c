@@ -1,6 +1,6 @@
 #include "boot_linux.h"
-#include "../include/config.h"
-#include "../include/linux.h"
+#include "../../../include/config.h"
+#include "../../../include/linux.h"
 #include "utils.h"
 #include <stddef.h>
 
@@ -40,6 +40,28 @@ static void configure_vram(uint64_t fb_start, uint64_t vram_start,
       vram_start >> 12;
   *(uint32_t *)(AMDGPU_MMIO_BASE + DCHUBBUB_WHITELIST_TOP_ADDR_0) =
       vram_end >> 12;
+}
+
+/* Debug-only (PL5_HV_STOP >= 6): force an unambiguous platform reset so a
+ * reached checkpoint shows up as a clean reboot instead of a frozen screen.
+ * Tries the AMD FCH reset port first, then falls back to a triple fault via a
+ * null IDT (works regardless of the currently-installed IDT). */
+static void pl5_reset(void) {
+  __asm__ volatile("mov $0xcf9, %%dx\n\t"
+                   "mov $0x06, %%al\n\t"
+                   "out %%al, %%dx\n\t"
+                   "mov $0x0e, %%al\n\t"
+                   "out %%al, %%dx\n\t"
+                   ::: "rax", "rdx", "memory");
+  __asm__ volatile("xor %%eax, %%eax\n\t"
+                   "push %%rax\n\t"
+                   "push %%rax\n\t"
+                   "lidt (%%rsp)\n\t"
+                   "int3\n\t"
+                   "ud2\n\t"
+                   ::: "rax", "memory");
+  for (;;)
+    halt();
 }
 
 static void append_e820_table(struct boot_params *bp, uint64_t start,
@@ -130,6 +152,10 @@ void boot_linux(void) {
     halt();
 #endif
 
+#if PL5_HV_STOP == 8
+  pl5_reset(); /* reset just before the kernel handoff (bzImage relocated) */
+#endif
+
   void (*startup_64)(uint64_t physaddr, struct boot_params *bp) =
       (void *)(kernel_pa + 0x200);
   startup_64(kernel_pa, bp);
@@ -159,9 +185,10 @@ void entry(void) {
 
   atomic_add_32(&exited_cpus, 1);
 
-#if !HV_HEADLESS_SINGLE_CORE && (PL5_HV_STOP == 0 || PL5_HV_STOP == 3)
-  // Single-core bring-up: we never drive the other cores (no smp_rendezvous),
-  // so waiting for all MAXCPU cores would hang. Skip the barrier.
+#if !HV_HEADLESS_SINGLE_CORE &&                                            \
+    (PL5_HV_STOP == 0 || PL5_HV_STOP == 3 || PL5_HV_STOP == 6)
+  // Wait until every core we drove in has run entry(). For STOP==6 this is
+  // followed by a reset checkpoint: reached => reboot, hung => frozen screen.
   while (atomic_cmpset_32(&exited_cpus, MAXCPU, MAXCPU) == 0)
     ;
 #endif
@@ -172,6 +199,10 @@ void entry(void) {
   __asm__ volatile("ud2");
   for (;;)
     halt();
+#endif
+
+#if PL5_HV_STOP == 6
+  pl5_reset(); /* reset right after the all-cores barrier */
 #endif
 
   if (get_cpu() != 0) {
@@ -190,6 +221,10 @@ void entry(void) {
 #if PL5_HV_STOP == 2
   for (;;)
     halt();
+#endif
+
+#if PL5_HV_STOP == 7
+  pl5_reset(); /* reset right after IOMMU disable + configure_vram */
 #endif
 
   printf("[*] Booting Linux in bare metal...\n");

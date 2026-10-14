@@ -1,5 +1,6 @@
 #include "utils.h"
 #include "linux.h"
+#include "manifest.h"
 #include "offsets.h"
 #include <fcntl.h>
 #include <stdio.h>
@@ -77,8 +78,11 @@ void *linux_initrd_user;
 size_t linux_initrd_len;
 
 int setup_env(void) {
-  notify("Welcome to pLinux5-NG! We'll defeat the HV and prepare the system"
-         "to boot Linux on sleep resume.\n");
+  char ident[64];
+  manifest_identity(ident, sizeof(ident));
+  notify("Welcome to %s! We'll defeat the HV and prepare the system "
+         "to boot Linux on sleep resume.\n",
+         ident);
   if (set_offsets())
     return -1;
   if (init_global_vars())

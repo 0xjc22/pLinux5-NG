@@ -1,5 +1,5 @@
 #include "hv_defeat_0607.h"
-#include "../shellcode_0607/shellcode_0607.h"
+#include "../../shellcode/0607/shellcode_0607.h"
 #include "config.h"
 #include "utils.h"
 #include <machine/segments.h>

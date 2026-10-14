@@ -77,7 +77,7 @@ static int g_armed;
 
 /*
  * Step selector handed to the takeover blob via RSP-resume RAX (see
- * shellcode_hv_takeover/takeover.S). Lets us bisect the post-[P5] crash without
+ * source/shellcode/hv_takeover/takeover.S). Lets us bisect the post-[P5] crash without
  * rebuilding the blob each time:
  *   0 = blob enters and returns immediately (validate enter/return path)
  *   1 = patch VMMCALL handler only

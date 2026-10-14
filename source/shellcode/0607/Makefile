@@ -30,5 +30,5 @@ $(TEXT_BIN): $(TARGET)
 clean:
 	rm -f $(OBJ) $(TARGET) $(TEXT_BIN) $(dump)
 
-$(dump): $(TEXT_BIN) ../scripts/bin2c.py
-	python3 ../scripts/bin2c.py $(TEXT_BIN) > $(dump)
+$(dump): $(TEXT_BIN) ../../../scripts/bin2c.py
+	python3 ../../../scripts/bin2c.py $(TEXT_BIN) > $(dump)

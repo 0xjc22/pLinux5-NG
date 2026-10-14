@@ -27,8 +27,8 @@ entry.o: entry.S
 $(BIN): $(TARGET)
 	objcopy -O binary $(TARGET) $(BIN)
 
-$(DUMP): $(BIN) ../scripts/bin2c.py
-	python3 ../scripts/bin2c.py $(BIN) > $(DUMP)
+$(DUMP): $(BIN) ../../../scripts/bin2c.py
+	python3 ../../../scripts/bin2c.py $(BIN) > $(DUMP)
 
 clean:
 	rm -f $(OBJ) $(TARGET) $(BIN) $(DUMP)

@@ -1,7 +1,7 @@
 #include "boot_linux.h"
-#include "../include/config.h"
-#include "../include/linux.h"
-#include "../shellcode_hv/shellcode_hv.h"
+#include "../../../include/config.h"
+#include "../../../include/linux.h"
+#include "../hv/shellcode_hv.h"
 #include "utils.h"
 
 #define DIG1TRANSMITTERCONTROL 0x4c
