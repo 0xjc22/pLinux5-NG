@@ -26,15 +26,17 @@ int main(void) {
   sigaction(SIGILL, &sa, 0);
   sigaction(SIGFPE, &sa, 0);
   if (setup_env()) {
-    notify("Something went wrong while initiating.\nPlease make sure your fw "
-           "is supported.");
+    notify("Something went wrong during initialization.\nPlease make sure "
+           "your fw is supported.");
     return -1;
   }
 
+#ifndef PL5_OFFSETS_MODE
   if (fetch_linux(&linux_i)) {
     notify("Something went wrong while installing linux files.\n");
     return -1;
   }
+#endif
 
   int is_1320 = 0;
   void *shellcode_kernel = NULL;

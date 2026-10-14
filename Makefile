@@ -1,4 +1,4 @@
-.PHONY: all clean version
+.PHONY: all clean version offsets
 
 ifndef PS5_PAYLOAD_SDK
     PS5_PAYLOAD_SDK = /opt/ps5-payload-sdk/
@@ -34,7 +34,7 @@ PL5_PROBE ?= 0
 # 3=post-barrier.
 PL5_HV_STOP ?= 0
 
-CFLAGS  := -std=c23 -Wall -DPL5_DIAG=$(PL5_DIAG) -DPL5_TAKEOVER_STAGE=$(PL5_TAKEOVER_STAGE) -DPL5_PROBE=$(PL5_PROBE) -Iinclude -Iinclude/byepervisor -Isource/shellcode/hv -Isource/shellcode/kernel -Isource/shellcode/break_hv -Isource/shellcode/hv_boot -Isource/shellcode/hv_takeover
+CFLAGS  := -std=c23 -Wall -DPL5_DIAG=$(PL5_DIAG) -DPL5_TAKEOVER_STAGE=$(PL5_TAKEOVER_STAGE) -DPL5_PROBE=$(PL5_PROBE) -Iinclude -Iinclude/core -Iinclude/hw -Iinclude/boot -Iinclude/byepervisor -Iinclude/hv/defeat -Iinclude/manifest -Iinclude/offsets -Isource/shellcode/hv -Isource/shellcode/kernel -Isource/shellcode/break_hv -Isource/shellcode/hv_boot -Isource/shellcode/hv_takeover
 # pLabs5 toolchain override (see PORTING.md). Pass LLVM_CONFIG in the environment:
 #   export LLVM_CONFIG=/nyaa/coding/public/PS5/dRPC5/pLabs5-SDK/tools/nixos/llvm-config
 LDFLAGS :=
@@ -51,6 +51,14 @@ all: $(SC_0607_H) $(SC_HV_H) $(SC_K_H) $(SC_BREAK_H) $(SC_BOOT_H) $(SC_TAKEOVER_
 # Print the manifest version (read from source/manifest/manifest.c).
 version:
 	@printf '%s\n' '$(PL5_VERSION)'
+
+# Offsets-dump payload (tools/pl5-offsets.c): the normal 13.20 vector runs and,
+# on resume (HV defeated, .text readable), dumps all offsets to /data/pl5-<fw>.zip
+# instead of taking over / booting Linux. Same entrypoint, just -DPL5_OFFSETS_MODE.
+offsets: $(SC_0607_H) $(SC_HV_H) $(SC_K_H) $(SC_BREAK_H) $(SC_BOOT_H) $(SC_TAKEOVER_H)
+	$(CC) $(CFLAGS) -DPL5_OFFSETS_MODE $(SRC) tools/pl5-offsets.c $(LDFLAGS) \
+		-o bin/pLinux5-NG-offsets.elf
+	@echo "built bin/pLinux5-NG-offsets.elf"
 
 $(SC_0607_H):
 	$(MAKE) -C source/shellcode/0607

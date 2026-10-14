@@ -1,4 +1,4 @@
-#include "../../../include/config.h"
+#include "../../../include/core/config.h"
 #include "boot_linux.h"
 #include "utils.h"
 

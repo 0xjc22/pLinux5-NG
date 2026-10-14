@@ -54,6 +54,12 @@ jobs:
             unzip \
             ca-certificates
 
+          # The pLabs5 llvm-config shim (--bindir) resolves the unversioned
+          # llvm tools it wants to symlink (ld.lld, llvm-ar, ...) from PATH.
+          # apt only installs the -21-suffixed ones, so expose the versioned
+          # bindir which contains the unversioned names too.
+          echo "/usr/lib/llvm-21/bin" >> "$GITHUB_PATH"
+
       - name: Download PS5 Payload SDK
         run: |
           wget -q \

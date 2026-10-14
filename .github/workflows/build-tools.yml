@@ -1,0 +1,96 @@
+name: Build offsets tool
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "tools/**"
+      - ".github/workflows/build-tools.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "tools/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # One entry per firmware we ship a signature table for
+        # (tools/sigtable_<fw>.h, regenerated with tools/gen_sigtable.py).
+        fw: ["1320"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 21
+          sudo apt-get install -y \
+            clang-21 \
+            lld-21 \
+            llvm-21 \
+            gcc \
+            make \
+            binutils \
+            wget \
+            unzip \
+            ca-certificates
+
+          # The pLabs5 llvm-config shim (--bindir) resolves the unversioned
+          # llvm tools it wants to symlink (ld.lld, llvm-ar, ...) from PATH.
+          echo "/usr/lib/llvm-21/bin" >> "$GITHUB_PATH"
+
+      - name: Download PS5 Payload SDK
+        run: |
+          wget -q \
+            -O ps5-payload-sdk.zip \
+            https://github.com/ps5-payload-dev/sdk/releases/download/v0.44/ps5-payload-sdk.zip
+
+          echo "4d06eab777bb135705b5a6816688c9132efb246093fe606ac488ab6cf65ca5b0  ps5-payload-sdk.zip" \
+            | sha256sum --check -
+
+          sudo unzip -q -d /opt ps5-payload-sdk.zip
+
+          test -f /opt/ps5-payload-sdk/toolchain/prospero.mk
+
+      - name: Checkout pLabs5 SDK
+        uses: actions/checkout@v4
+        with:
+          repository: pLabs5/pLabs5-SDK
+          path: pLabs5-SDK
+
+      - name: Build pl5-offsets
+        run: |
+          test -f "tools/sigtable_${{ matrix.fw }}.h"
+          make -C tools clean
+          make -C tools SIGTABLE="sigtable_${{ matrix.fw }}.h"
+          mv tools/pl5-offsets.elf "tools/pl5-offsets-${{ matrix.fw }}.elf"
+
+        env:
+          PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+          LLVM_CONFIG: ${{ github.workspace }}/pLabs5-SDK/tools/nixos/llvm-config
+
+      - name: Generate checksum
+        run: sha256sum "tools/pl5-offsets-${{ matrix.fw }}.elf" \
+          > "tools/pl5-offsets-${{ matrix.fw }}.elf.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pl5-offsets-${{ matrix.fw }}
+          path: |
+            tools/pl5-offsets-${{ matrix.fw }}.elf
+            tools/pl5-offsets-${{ matrix.fw }}.elf.sha256
+          if-no-files-found: error
+          retention-days: 30

@@ -1,6 +1,6 @@
 #include "boot_linux.h"
-#include "../../../include/config.h"
-#include "../../../include/linux.h"
+#include "../../../include/core/config.h"
+#include "../../../include/core/linux.h"
 #include "utils.h"
 #include <stddef.h>
 
