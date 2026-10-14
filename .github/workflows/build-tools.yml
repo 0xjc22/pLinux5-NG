@@ -76,7 +76,6 @@ jobs:
           test -f "tools/sigtable_${{ matrix.fw }}.h"
           make -C tools clean
           make -C tools SIGTABLE="sigtable_${{ matrix.fw }}.h"
-          mv tools/pl5-offsets.elf "tools/pl5-offsets-${{ matrix.fw }}.elf"
 
         env:
           PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
@@ -84,16 +83,16 @@ jobs:
 
       - name: Generate checksum
         run: |
-          sha256sum "tools/pl5-offsets-${{ matrix.fw }}.elf" \
-            > "tools/pl5-offsets-${{ matrix.fw }}.elf.sha256"
+          sha256sum tools/pl5-offsets.elf \
+            > tools/pl5-offsets.elf.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
           name: pl5-offsets-${{ matrix.fw }}
           path: |
-            tools/pl5-offsets-${{ matrix.fw }}.elf
-            tools/pl5-offsets-${{ matrix.fw }}.elf.sha256
+            tools/pl5-offsets.elf
+            tools/pl5-offsets.elf.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -121,5 +120,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/pl5-offsets-*.elf
-            release/pl5-offsets-*.elf.sha256
+            release/pl5-offsets.elf
+            release/pl5-offsets.elf.sha256
