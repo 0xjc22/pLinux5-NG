@@ -9,7 +9,7 @@ include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 BIN := pl5-offsets.elf
 SIGTABLE ?= sigtable_1320.h
 
-CFLAGS += -DSIGTABLE_HEADER='"$(SIGTABLE)"'
+CFLAGS += -DPL5_SIGTABLE_HEADER='"$(SIGTABLE)"'
 
 all: $(BIN)
 

@@ -65,28 +65,24 @@ static uint64_t ktext;
 static uint64_t resolved[PL5_OFF_TABLE_LEN];
 static uint8_t how[PL5_OFF_TABLE_LEN];
 
-/* ------------------------------------------------- XOM lift (kernel text) --
- * 13.20 maps kernel .text execute-only (PTE bit 58). A plain kernel_copyout of a
- * .text page faults inside the kernel and panics -- which is exactly what the
- * first .text read used to do. Before touching .text we clear the XO bit (and
- * force RW) on every page-table level covering [ktext, kdata), then drop stale
- * translations, mirroring the main payload's remove_xotext() /
- * page_chain_set_rw() / kernel_pmap_invalidate_all(). */
+/* -------------------------------------- kernel .text readability gating --
+ * 13.20 maps kernel .text execute-only (PTE bit 58, XOTEXT): a plain
+ * kernel_copyout of a .text page faults inside the kernel and panics. The
+ * Byepervisor escape (run by the payload before rest mode, like the main
+ * payload) clears XOTEXT on the .text PTEs and the resume flushes the stale TLB,
+ * so post-resume .text reads work normally. We still verify the PTE is XOTEXT-
+ * free before reading (text_readable()) so a surprise can never fault the
+ * kernel -- worst case the .text is skipped. Only page tables are touched
+ * during the check, and those live in ordinary memory. */
 static const pl5_off_t *find_entry(const char *name);
 
-/* Set once we know kernel .text is readable; gates every .text read. */
-static int g_xom_ok;
+/* Set once the kernel pmap is known and .text is confirmed readable. */
+static int g_text_ok;
 
-#ifndef PL5_OFFSETS_MODE
-/* PTE surgery for the standalone build only. The supported path runs the dump
- * from the payload's post-resume() (PL5_OFFSETS_MODE), where the suspend/resume
- * TLB flush has already made .text readable -- see below. */
-static uint64_t g_cr3;
-static uint64_t g_dmap;
-static uint64_t g_kdata;
+static uint64_t g_cr3;  /* kernel CR3 (PMAP_STORE + 0x28)      */
+static uint64_t g_dmap; /* direct-map base (pm_pml4 - pm_cr3) */
 
 #define PA_MASK 0x000FFFFFFFFFF000ULL
-#define INKERNEL_VA(va) ((va) & 0xFFFF000000000000ULL)
 
 static uint64_t pv_rd64(uint64_t a) {
   uint64_t v = 0;
@@ -94,10 +90,7 @@ static uint64_t pv_rd64(uint64_t a) {
   return v;
 }
 
-static void pv_wr64(uint64_t a, uint64_t v) {
-  kernel_copyin(&v, (intptr_t)a, sizeof v);
-}
-
+/* Derive the kernel pmap + direct-map base (read-only). */
 static int init_paging(void) {
   const pl5_off_t *e = find_entry("VMSPACE_VM_PMAP");
   uint64_t pmap_off = e ? (e->value ? e->value : e->expected) : 0;
@@ -117,93 +110,42 @@ static int init_paging(void) {
   return 0;
 }
 
-static void page_chain_set_rw(uint64_t va) {
+/* Leaf page-table entry for `va` in the kernel pmap (0 if not present). */
+static uint64_t va_leaf_entry(uint64_t va, int *is_leaf) {
   uint64_t table_phys = g_cr3;
 
+  *is_leaf = 0;
   for (int level = 0; level < 4; level++) {
     int shift = 39 - level * 9;
     uint64_t idx = (va >> shift) & 0x1FF;
-    uint64_t entry_va = g_dmap + (table_phys & PA_MASK) + idx * 8;
-    uint64_t entry = pv_rd64(entry_va);
-
-    if (!(entry & 1))
-      return;
-
-    uint8_t update = 0;
-    if (!(entry & (1ULL << 1))) {
-      entry |= (1ULL << 1);
-      update = 1;
-    }
-    if (entry & (1ULL << 58)) {
-      entry &= ~(1ULL << 58);
-      update = 1;
-    }
-    if (update)
-      pv_wr64(entry_va, entry);
-
-    if (((level == 1 || level == 2) && (entry & (1ULL << 7))) || level == 3)
-      return;
-
-    table_phys = entry & PA_MASK;
-  }
-}
-
-static uint64_t page_remove_global(uint64_t va) {
-  uint64_t table_phys = g_cr3;
-
-  for (int level = 0; level < 4; level++) {
-    int shift = 39 - level * 9;
-    uint64_t idx = (va >> shift) & 0x1FF;
-    uint64_t entry_va = g_dmap + (table_phys & PA_MASK) + idx * 8;
-    uint64_t entry = pv_rd64(entry_va);
+    uint64_t entry = pv_rd64(g_dmap + (table_phys & PA_MASK) + idx * 8);
 
     if (!(entry & 1))
       return 0;
-
     if ((level == 1 || level == 2) && (entry & (1ULL << 7))) {
-      entry &= ~(1ULL << 8);
-      pv_wr64(entry_va, entry);
-      uint64_t ps = (level == 1) ? (1ULL << 30) : (1ULL << 21);
-      return (entry & PA_MASK) | (va & (ps - 1));
+      *is_leaf = 1;
+      return entry;
     }
     if (level == 3) {
-      entry &= ~(1ULL << 8);
-      pv_wr64(entry_va, entry);
-      return (entry & PA_MASK) | (va & 0xFFF);
+      *is_leaf = 1;
+      return entry;
     }
     table_phys = entry & PA_MASK;
   }
   return 0;
 }
 
-/* Force the kernel to drop stale translations (upstream trick: unmap a fresh
- * pipe buffer's global bit, which makes the kernel re-walk). Best-effort. */
-static int kernel_pmap_invalidate_all(void) {
-  static uint8_t two_zero_pages[0x8000];
-  int fds[2];
-
-  if (pipe(fds))
-    return -1;
-  fcntl(fds[1], F_SETFL, O_NONBLOCK);
-  if (write(fds[1], two_zero_pages, sizeof two_zero_pages) > 0) {
-    uint64_t filedata = (uint64_t)kernel_get_proc_file(-1, fds[0]);
-    if (INKERNEL_VA(filedata)) {
-      uint64_t buffer = pv_rd64(filedata + 0x10);
-      if (INKERNEL_VA(buffer))
-        page_remove_global(buffer);
-    }
-  }
-  close(fds[1]);
-  close(fds[0]);
-  return 0;
+/* Confirm kernel .text is actually readable BEFORE reading it, so a surprise can
+ * never fault the kernel -- worst case the .text dump is skipped. The
+ * Byepervisor escape clears XOTEXT (bit 58) on the .text PTEs and the
+ * suspend/resume cycle flushes the stale TLB, so post-resume the leaf entry has
+ * bit 58 clear -- which is exactly why this payload enters rest mode like the
+ * main one. Only page tables are read here, and they live in ordinary memory. */
+static int text_readable(void) {
+  int leaf = 0;
+  uint64_t entry = va_leaf_entry(ktext, &leaf);
+  return leaf && (entry & 1) && !(entry & (1ULL << 58));
 }
-
-static void remove_xotext(void) {
-  g_kdata = (uint64_t)KERNEL_ADDRESS_DATA_BASE;
-  for (uint64_t a = ktext; a < g_kdata; a += 0x1000)
-    page_chain_set_rw(a);
-}
-#endif /* !PL5_OFFSETS_MODE */
 
 static const uint64_t hv_candidates[] = {0x062800000ULL, 0x8e0800000ULL};
 
@@ -424,7 +366,7 @@ static const char *how_name(uint8_t h) {
 }
 
 static void scan_kernel(void) {
-  if (!g_xom_ok) /* .text is execute-only; scanning it would panic */
+  if (!g_text_ok) /* kernel pmap/dmap unknown; can't read .text safely */
     return;
   uint64_t base = ktext;
   uint64_t size = (uint64_t)PL5_KERNEL_TEXT_SIZE + PL5_KERNEL_DATA_SIZE;
@@ -479,12 +421,7 @@ int pl5_dump_offsets(void) {
   uint32_t ver = kernel_get_fw_version();
   uint32_t fwv = (ver >> 0x10) & 0xFFFF;
   uint64_t hv_pa = 0;
-#ifdef PL5_OFFSETS_MODE
-  /* Called from the payload's post-resume(); setup_env() already set ktext and
-   * the HV is defeated, so .text is readable. */
-#else
   ktext = KERNEL_ADDRESS_TEXT_BASE;
-#endif
 
   printf("[pl5-offsets] fw=0x%04x (raw 0x%08x) ktext=0x%llx\n", fwv, ver,
          (unsigned long long)ktext);
@@ -512,28 +449,19 @@ int pl5_dump_offsets(void) {
   snprintf(p_rep, sizeof(p_rep), "%s/report.txt", dir);
   snprintf(p_zip, sizeof(p_zip), PL5_OUT_ROOT "/pl5-%04x.zip", fwv);
 
-#ifdef PL5_OFFSETS_MODE
-  /* Running from post-resume(): the HV is defeated and the suspend/resume cycle
-   * flushed the stale XOTEXT translations, so .text reads work directly. */
-  g_xom_ok = 1;
-#else
-  /* Standalone build. Clear XOTEXT on the kernel-text PTEs so a read does not
-   * fault. This does NOT flush the TLB, so it only helps pages whose
-   * translation was not cached -- the reliable path is to run the dump from the
-   * payload's post-resume() (build with PL5_OFFSETS_MODE). */
-  g_xom_ok = (init_paging() == 0);
-  if (g_xom_ok) {
-    remove_xotext();
-    kernel_pmap_invalidate_all();
-  }
-  printf("[pl5-offsets] XOM lift %s (cr3=%#llx dmap=%#llx)\n",
-         g_xom_ok ? "ok" : "unavailable", (unsigned long long)g_cr3,
-         (unsigned long long)g_dmap);
-#endif
+  /* Derive the kernel pmap and confirm kernel .text is actually readable before
+   * touching it, so a surprise can never fault the kernel -- worst case the
+   * .text dump is simply skipped. On the supported path this payload has just
+   * come back from rest mode, where the Byepervisor escape left XOTEXT cleared
+   * on the .text PTEs (see text_readable()). */
+  g_text_ok = (init_paging() == 0) && text_readable();
+  printf("[pl5-offsets] kernel text %s (cr3=%#llx dmap=%#llx)\n",
+         g_text_ok ? "readable" : "unavailable",
+         (unsigned long long)g_cr3, (unsigned long long)g_dmap);
   fflush(stdout);
 
   uint64_t got_text = 0, got_data = 0, got_hv = 0;
-  if (g_xom_ok)
+  if (g_text_ok)
     dump_region(p_text, ktext, PL5_KERNEL_TEXT_SIZE, &got_text);
   printf("[pl5-offsets] kernel text dump: 0x%llx bytes\n",
          (unsigned long long)got_text);
@@ -587,7 +515,7 @@ int pl5_dump_offsets(void) {
       break;
     case PL5_MODE_SIG: {
       uint8_t tmp[PL5_SIG_MAX];
-      if (g_xom_ok &&
+      if (g_text_ok &&
           kernel_copyout((intptr_t)(ktext + e->expected), tmp, e->sig_len) == 0 &&
           memcmp(tmp, e->sig, e->sig_len) == 0) {
         resolved[i] = e->expected;
@@ -728,6 +656,8 @@ int pl5_dump_offsets(void) {
 }
 
 #ifndef PL5_OFFSETS_MODE
-/* Standalone entry point (make -C tools). Sends/runs as a plain payload. */
+/* Standalone entry point (make -C tools). Sends/runs as a plain payload; used
+ * for building/CI. The supported run path is the offset payload built via
+ * `make offsets`, which calls pl5_dump_offsets() from post_resume(). */
 int main(void) { return pl5_dump_offsets(); }
 #endif

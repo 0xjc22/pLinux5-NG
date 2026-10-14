@@ -72,9 +72,15 @@ int main(void) {
     goto err;
   }
 
+#ifdef PL5_OFFSETS_MODE
+  notify("Finished preparation. Going to rest mode in 5 seconds.\nPlease wait "
+         "for the orange light to stop blinking, then wake the console to "
+         "continue the offset dump.\n");
+#else
   notify("Finished preparation. Going to rest mode in 5 seconds.\nPlease wait "
          "for the orange light to stop "
          "blinking and then wakeup to Linux :)\n");
+#endif
 
   sleep(5);
   enter_rest_mode();
@@ -84,11 +90,20 @@ int main(void) {
   if (is_1320)
     hv_defeat_1320_post_resume();
 
+#ifdef PL5_OFFSETS_MODE
+  /* Offsets payload: hv_defeat_1320_post_resume() has already dumped the
+   * offsets and returned. Exit cleanly so elfldr is free to take the next
+   * payload (the normal payload instead sleeps forever to keep the booted
+   * kernel/shellcode alive). */
+  notify("13.20: offset payload done; exiting.\n");
+  return 0;
+#else
   while (1) {
     sleep(30);
   }
 
   return 0;
+#endif
 
 err:
   notify("Something went wrong while defeating Hypervisor.\nPlease make sure "

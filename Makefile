@@ -52,9 +52,10 @@ all: $(SC_0607_H) $(SC_HV_H) $(SC_K_H) $(SC_BREAK_H) $(SC_BOOT_H) $(SC_TAKEOVER_
 version:
 	@printf '%s\n' '$(PL5_VERSION)'
 
-# Offsets-dump payload (tools/pl5-offsets.c): the normal 13.20 vector runs and,
-# on resume (HV defeated, .text readable), dumps all offsets to /data/pl5-<fw>.zip
-# instead of taking over / booting Linux. Same entrypoint, just -DPL5_OFFSETS_MODE.
+# Offsets-dump payload (tools/pl5-offsets.c): runs the same 13.20 Byepervisor
+# escape as the main payload + enters rest mode, but on resume (XOM on kernel
+# .text now cleared) it dumps every offset to /data/pl5-<fw>.zip instead of
+# taking over / booting Linux. Same entrypoint, just -DPL5_OFFSETS_MODE.
 offsets: $(SC_0607_H) $(SC_HV_H) $(SC_K_H) $(SC_BREAK_H) $(SC_BOOT_H) $(SC_TAKEOVER_H)
 	$(CC) $(CFLAGS) -DPL5_OFFSETS_MODE $(SRC) tools/pl5-offsets.c $(LDFLAGS) \
 		-o bin/pLinux5-NG-offsets.elf

@@ -82,8 +82,9 @@ jobs:
           LLVM_CONFIG: ${{ github.workspace }}/pLabs5-SDK/tools/nixos/llvm-config
 
       - name: Generate checksum
-        run: sha256sum "tools/pl5-offsets-${{ matrix.fw }}.elf" \
-          > "tools/pl5-offsets-${{ matrix.fw }}.elf.sha256"
+        run: |
+          sha256sum "tools/pl5-offsets-${{ matrix.fw }}.elf" \
+            > "tools/pl5-offsets-${{ matrix.fw }}.elf.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

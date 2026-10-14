@@ -56,8 +56,9 @@ static uint64_t g_payload_va;
 static int g_armed;
 
 #ifdef PL5_OFFSETS_MODE
-/* Provided by tools/pl5-offsets.c when the offsets-dump payload is built:
- * after resume the HV is defeated, so we dump offsets instead of taking over. */
+/* Provided by tools/pl5-offsets.c when the offsets-dump payload is built: the
+ * escape has disabled XOM on kernel .text by resume time, so we dump offsets
+ * instead of taking over / booting Linux. */
 int pl5_dump_offsets(void);
 #endif
 
@@ -553,8 +554,8 @@ int hv_defeat_1320_post_resume(void) {
   notify("13.20: [W+] post-wake settling done (diag=%d).\n", PL5_DIAG);
 
 #ifdef PL5_OFFSETS_MODE
-  /* Offsets-dump payload: the HV is defeated and .text is readable, so dump
-   * the offsets and stop -- no post-resume takeover / Linux boot. */
+  /* Offsets-dump payload: the escape + resume have cleared XOM on kernel .text,
+   * so dump the offsets and stop -- no post-resume takeover / Linux boot. */
   notify("13.20: HV defeated; dumping offsets...\n");
   pl5_dump_offsets();
   notify("13.20: offset dump complete.\n");
