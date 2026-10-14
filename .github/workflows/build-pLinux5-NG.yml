@@ -1,0 +1,85 @@
+
+name: Build pLinux5-NG
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-18 \
+            lld-18 \
+            llvm-18 \
+            gcc \
+            make \
+            binutils \
+            python3 \
+            wget \
+            unzip
+
+      - name: Download PS5 Payload SDK
+        run: |
+          wget -q \
+            -O ps5-payload-sdk.zip \
+            https://github.com/ps5-payload-dev/sdk/releases/download/v0.44/ps5-payload-sdk.zip
+
+          echo "4d06eab777bb135705b5a6816688c9132efb246093fe606ac488ab6cf65ca5b0  ps5-payload-sdk.zip" \
+            | sha256sum --check -
+
+          sudo unzip -q -d /opt ps5-payload-sdk.zip
+
+          test -f /opt/ps5-payload-sdk/toolchain/prospero.mk
+
+      - name: Build pLinux5-NG
+        run: |
+          make clean
+          make -j"$(nproc)"
+
+        env:
+          PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pLinux5-NG
+          path: bin/pLinux5-NG.elf
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pLinux5-NG
+          path: release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/pLinux5-NG.elf
+          generate_release_notes: true

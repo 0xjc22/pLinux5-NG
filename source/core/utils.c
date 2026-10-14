@@ -77,7 +77,7 @@ void *linux_initrd_user;
 size_t linux_initrd_len;
 
 int setup_env(void) {
-  notify("Welcome to pLinux5-NG. We'll defeat HV and prepare the system "
+  notify("Welcome to pLinux5-NG! We'll defeat the HV and prepare the system"
          "to boot Linux on sleep resume.\n");
   if (set_offsets())
     return -1;

@@ -1,6 +1,6 @@
 #include "prepare_resume.h"
-#include "../shellcode_kernel/shellcode_kernel.h"
-#include "../shellcode_kernel/shellcode_kernel_args.h"
+#include "shellcode/kernel/shellcode_kernel.h"
+#include "shellcode/kernel/shellcode_kernel_args.h"
 #include "config.h"
 #include "iommu.h"
 #include "offsets.h"

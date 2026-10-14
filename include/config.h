@@ -43,7 +43,7 @@
  *   1 = freeze at the very top of entry() (tests diversion + entry)
  *   2 = halt after linux_info copy + configure_vram (barrier skipped)
  *   3 = halt after the SMP barrier (barrier enabled)
- *   0 = full boot (default).  Set with `make -C shellcode_hv PL5_HV_STOP=N`. */
+ *   0 = full boot (default).  Set with `make -C source/shellcode/hv PL5_HV_STOP=N`. */
 #ifndef PL5_HV_STOP
 #define PL5_HV_STOP 0
 #endif

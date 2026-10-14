@@ -7,54 +7,54 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 
 BIN := bin/pLinux5-NG.elf
-SRC := $(wildcard source/*.c source/byepervisor/*.c)
+SRC := $(wildcard source/*.c source/byepervisor/*.c source/offsets/*.c source/hv/defeat/*.c)
 OBJS := $(SRC:.c=.o)
 
-# Diagnostic bisection stage (see source/hv_defeat_1320.c). Override on the
+# Diagnostic bisection stage (see source/hv/defeat/hv_defeat_1320.c). Override on the
 # command line, e.g. `make PL5_DIAG=1`. Remember to clear the objects first
 # (the flag does not retrigger a rebuild on its own): `make -C . clean-objs`.
 PL5_DIAG ?= 4
-# Takeover-blob step selector (see shellcode_hv_takeover/takeover.S).
+# Takeover-blob step selector (see source/shellcode/hv_takeover/takeover.S).
 PL5_TAKEOVER_STAGE ?= 3
-# Pre-rest-mode resume_rip probe (source/hv_defeat_1320.c). Off by default so
+# Pre-rest-mode resume_rip probe (source/hv/defeat/hv_defeat_1320.c). Off by default so
 # PL5_DIAG=4 runs the real post-resume flow; set to 1 for the probe build.
 PL5_PROBE ?= 0
-# shellcode_hv checkpoint bisection (shellcode_hv/boot_linux.c): freeze at a
+# shellcode_hv checkpoint bisection (source/shellcode/hv/boot_linux.c): freeze at a
 # checkpoint instead of booting. 0=full boot, 1=entry, 2=post-configure_vram,
 # 3=post-barrier.
 PL5_HV_STOP ?= 0
 
-CFLAGS  := -std=c23 -Wall -DPL5_DIAG=$(PL5_DIAG) -DPL5_TAKEOVER_STAGE=$(PL5_TAKEOVER_STAGE) -DPL5_PROBE=$(PL5_PROBE) -Iinclude -Iinclude/byepervisor -Ishellcode_hv -Ishellcode_kernel -Ishellcode_break_hv -Ishellcode_hv_boot -Ishellcode_hv_takeover
+CFLAGS  := -std=c23 -Wall -DPL5_DIAG=$(PL5_DIAG) -DPL5_TAKEOVER_STAGE=$(PL5_TAKEOVER_STAGE) -DPL5_PROBE=$(PL5_PROBE) -Iinclude -Iinclude/byepervisor -Isource/shellcode/hv -Isource/shellcode/kernel -Isource/shellcode/break_hv -Isource/shellcode/hv_boot -Isource/shellcode/hv_takeover
 # pLabs5 toolchain override (see PORTING.md). Pass LLVM_CONFIG in the environment:
 #   export LLVM_CONFIG=/nyaa/coding/public/PS5/dRPC5/pLabs5-SDK/tools/nixos/llvm-config
 LDFLAGS :=
 
-SC_0607_H := shellcode_0607/shellcode_0607.h
-SC_HV_H := shellcode_hv/shellcode_hv.h
-SC_K_H  := shellcode_kernel/shellcode_kernel.h
-SC_BREAK_H := shellcode_break_hv/break_hv.h
-SC_BOOT_H := shellcode_hv_boot/hv_boot.h
-SC_TAKEOVER_H := shellcode_hv_takeover/takeover.h
+SC_0607_H := source/shellcode/0607/shellcode_0607.h
+SC_HV_H := source/shellcode/hv/shellcode_hv.h
+SC_K_H  := source/shellcode/kernel/shellcode_kernel.h
+SC_BREAK_H := source/shellcode/break_hv/break_hv.h
+SC_BOOT_H := source/shellcode/hv_boot/hv_boot.h
+SC_TAKEOVER_H := source/shellcode/hv_takeover/takeover.h
 
 all: $(SC_0607_H) $(SC_HV_H) $(SC_K_H) $(SC_BREAK_H) $(SC_BOOT_H) $(SC_TAKEOVER_H) $(BIN)
 
 $(SC_0607_H):
-	$(MAKE) -C shellcode_0607
+	$(MAKE) -C source/shellcode/0607
 
 $(SC_HV_H):
-	$(MAKE) -C shellcode_hv PL5_HV_STOP=$(PL5_HV_STOP)
+	$(MAKE) -C source/shellcode/hv PL5_HV_STOP=$(PL5_HV_STOP)
 
 $(SC_K_H): $(SC_HV_H)
-	$(MAKE) -C shellcode_kernel
+	$(MAKE) -C source/shellcode/kernel
 
 $(SC_BREAK_H):
-	$(MAKE) -C shellcode_break_hv
+	$(MAKE) -C source/shellcode/break_hv
 
 $(SC_BOOT_H):
-	$(MAKE) -C shellcode_hv_boot
+	$(MAKE) -C source/shellcode/hv_boot
 
 $(SC_TAKEOVER_H):
-	$(MAKE) -C shellcode_hv_takeover
+	$(MAKE) -C source/shellcode/hv_takeover
 
 $(OBJS): %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -72,9 +72,9 @@ clean-objs:
 
 clean:
 	rm -f $(BIN) $(OBJS)
-	$(MAKE) -C shellcode_0607 clean
-	$(MAKE) -C shellcode_hv clean
-	$(MAKE) -C shellcode_kernel clean
-	$(MAKE) -C shellcode_break_hv clean
-	$(MAKE) -C shellcode_hv_boot clean
-	$(MAKE) -C shellcode_hv_takeover clean
+	$(MAKE) -C source/shellcode/0607 clean
+	$(MAKE) -C source/shellcode/hv clean
+	$(MAKE) -C source/shellcode/kernel clean
+	$(MAKE) -C source/shellcode/break_hv clean
+	$(MAKE) -C source/shellcode/hv_boot clean
+	$(MAKE) -C source/shellcode/hv_takeover clean

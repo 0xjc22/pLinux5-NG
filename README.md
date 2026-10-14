@@ -37,7 +37,7 @@ step 4, then come back here.
 - set your playstations DNS to `45.56.67.85`:
   - `settings` -> `network` -> `settings` -> `set up internet connection` then click the `options` button on
   your controller, select `advanced settings`, from there set `primary DNS` to `45.56.67.85` then select `ok`, if
-  done correctly, you will get a popup saying `internet connection failed`, thats good, continue.***
+  done correctly, you will get a popup saying `internet connection failed`, thats good, continue.
 
 - navigate to the users guide:
   - `settings` -> `Guide & Tips, Health and Safety, and Other Information` -> `User's Guide`.
@@ -52,12 +52,11 @@ now download the `pLinux5-NG.elf` file from releases, or see [building](#buildin
 # building
 
 ## locally
-requires the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), and a C compiler:
+requires the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), the [pLabs5-SDK](https://github.com/pLabs5/pLabs5-SDK) and a C compiler:
 
 ```bash
 export PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk
-# only use the following if on NixOS
-# export LLVM_CONFIG=/path/to/pLabs5-SDK/tools/nixos/llvm-config
+LLVM_CONFIG=/path/to/pLabs5-SDK/tools/nixos/llvm-config
 make -j
 ```
 

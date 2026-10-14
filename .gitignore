@@ -4,12 +4,18 @@ bin/
 *.elf
 
 # Generated shellcode blobs / embedded headers
-shellcode_0607/shellcode_0607.bin
-shellcode_0607/shellcode_0607.h
-shellcode_hv/shellcode_hv.bin
-shellcode_hv/shellcode_hv.h
-shellcode_kernel/shellcode_kernel.bin
-shellcode_kernel/shellcode_kernel.h
+source/shellcode/0607/shellcode_0607.bin
+source/shellcode/0607/shellcode_0607.h
+source/shellcode/break_hv/break_hv.bin
+source/shellcode/break_hv/break_hv.h
+source/shellcode/hv/shellcode_hv.bin
+source/shellcode/hv/shellcode_hv.h
+source/shellcode/hv_boot/hv_boot.bin
+source/shellcode/hv_boot/hv_boot.h
+source/shellcode/hv_takeover/takeover.bin
+source/shellcode/hv_takeover/takeover.h
+source/shellcode/kernel/shellcode_kernel.bin
+source/shellcode/kernel/shellcode_kernel.h
 
 # Editor / OS noise
 *.swp
