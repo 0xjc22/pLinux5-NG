@@ -1,6 +1,6 @@
 > [!IMPORTANT]
 > this project is still **VERY** Work-in-progress, currently only 13.20 is supported
-> until I can get linux running properly on firmware 13.20
+> until i can get offsets for other FW's / full linux support
 
 # pLinux5-NG
 
