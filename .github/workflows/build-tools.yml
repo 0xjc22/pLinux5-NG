@@ -3,6 +3,7 @@ name: Build offsets tool
 on:
   push:
     branches: [master]
+    tags: ["v*"]
     paths:
       - "tools/**"
       - ".github/workflows/build-tools.yml"
@@ -28,7 +29,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -65,7 +66,7 @@ jobs:
           test -f /opt/ps5-payload-sdk/toolchain/prospero.mk
 
       - name: Checkout pLabs5 SDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: pLabs5/pLabs5-SDK
           path: pLabs5-SDK
@@ -87,7 +88,7 @@ jobs:
             > "tools/pl5-offsets-${{ matrix.fw }}.elf.sha256"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: pl5-offsets-${{ matrix.fw }}
           path: |
@@ -95,3 +96,30 @@ jobs:
             tools/pl5-offsets-${{ matrix.fw }}.elf.sha256
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    # Tag-gated, like the main workflow: only publish on a v* tag push. The
+    # tag push also runs build-pLinux5-NG.yml's release job; both attach to the
+    # same GitHub Release (softprops get-or-create), so the offsets binaries
+    # land alongside pLinux5-NG.elf on that release.
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: pl5-offsets-*
+          path: release
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/pl5-offsets-*.elf
+            release/pl5-offsets-*.elf.sha256
